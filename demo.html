@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Node Editor V0.8 - Daisy Chaining</title>
+    <style>
+      /* --- 基础样式 --- */
+      body,
+      html {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #1e1e1e;
+        font-family: "Segoe UI", sans-serif;
+      }
+
+      #editor-container {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        background-image: linear-gradient(
+            rgba(255, 255, 255, 0.05) 1px,
+            transparent 1px
+          ),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+        background-size: 40px 40px;
+        user-select: none;
+      }
+
+      #connections-layer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 1;
+      }
+
+      /* 连线 */
+      .connection-line-visual {
+        fill: none;
+        stroke: #646cff;
+        stroke-width: 3px;
+        stroke-linecap: round;
+        pointer-events: none;
+        transition: stroke 0.2s;
+      }
+      .connection-group.selected .connection-line-visual {
+        stroke: #ffaa00;
+        filter: drop-shadow(0 0 5px #ffaa00);
+      }
+      .connection-line-hit {
+        fill: none;
+        stroke: transparent;
+        stroke-width: 20px;
+        pointer-events: stroke;
+        cursor: pointer;
+      }
+      .connection-line-hit:hover + .connection-line-visual {
+        stroke: #ff4444;
+        filter: drop-shadow(0 0 5px #ff4444);
+      }
+
+      #temp-line {
+        fill: none;
+        stroke: #aaa;
+        stroke-width: 2px;
+        stroke-dasharray: 5, 5;
+        pointer-events: none;
+        display: none;
+      }
+
+      /* 节点 */
+      .node {
+        position: absolute;
+        width: 180px;
+        background: rgba(40, 40, 40, 0.95);
+        border: 1px solid #555;
+        border-radius: 8px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+        color: #fff;
+        z-index: 2;
+        transition: border-color 0.1s;
+      }
+      .node.selected {
+        border-color: #ffaa00;
+        box-shadow: 0 0 0 2px rgba(255, 170, 0, 0.5),
+          0 4px 15px rgba(0, 0, 0, 0.5);
+      }
+
+      .node-header {
+        padding: 8px 12px;
+        background: #333;
+        border-bottom: 1px solid #444;
+        border-radius: 8px 8px 0 0;
+        font-size: 14px;
+        font-weight: bold;
+        cursor: move;
+      }
+      .node-body {
+        padding: 12px;
+        font-size: 12px;
+        color: #aaa;
+        min-height: 40px;
+      }
+      input[type="color"] {
+        width: 100%;
+        height: 30px;
+        border: none;
+        padding: 0;
+        cursor: pointer;
+      }
+
+      .result-box {
+        width: 100%;
+        height: 40px;
+        background: #222;
+        border: 1px dashed #666;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-weight: bold;
+      }
+
+      .handle {
+        position: absolute;
+        width: 14px;
+        height: 14px;
+        background: #666;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        top: 40px;
+        cursor: crosshair;
+        transition: all 0.2s;
+        z-index: 3;
+      }
+      .handle:hover {
+        transform: scale(1.3);
+        background: #00ff88;
+      }
+      .handle.valid-target {
+        transform: scale(1.5);
+        background: #ffff00;
+        box-shadow: 0 0 10px #ffff00;
+      }
+      .handle-input {
+        left: -9px;
+        border-color: #ff0055;
+      }
+      .handle-output {
+        right: -9px;
+        border-color: #00aaff;
+      }
+
+      /* 框选与菜单 */
+      #selection-box {
+        position: absolute;
+        border: 1px solid rgba(0, 120, 215, 0.8);
+        background: rgba(0, 120, 215, 0.2);
+        display: none;
+        pointer-events: none;
+        z-index: 999;
+      }
+      #context-menu {
+        position: fixed;
+        display: none;
+        z-index: 1000;
+        background: #2d2d2d;
+        border: 1px solid #454545;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+        border-radius: 4px;
+        padding: 4px 0;
+        min-width: 140px;
+      }
+      .menu-item {
+        padding: 8px 16px;
+        color: #eee;
+        font-size: 13px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+      }
+      .menu-item:hover {
+        background: #007fd4;
+        color: #fff;
+      }
+      .menu-item .shortcut {
+        color: #aaa;
+        font-size: 11px;
+        margin-left: 10px;
+      }
+      .menu-separator {
+        height: 1px;
+        background: #454545;
+        margin: 4px 0;
+      }
+    </style>
+  </head>
+  <body oncontextmenu="return false;">
+    <div id="editor-container">
+      <svg id="connections-layer">
+        <path id="temp-line" d=""></path>
+      </svg>
+      <div id="selection-box"></div>
+    </div>
+
+    <div id="context-menu"></div>
+
+    <script>
+      // --- 1. State ---
+      const state = {
+        nodes: [
+          {
+            id: "node-red",
+            x: 100,
+            y: 100,
+            title: "Input A",
+            type: "source",
+            data: { color: "#ff0000" },
+          },
+          {
+            id: "node-mix-1",
+            x: 400,
+            y: 150,
+            title: "Mixer 1",
+            type: "process",
+            data: { result: "" },
+          },
+          {
+            id: "node-mix-2",
+            x: 700,
+            y: 300,
+            title: "Mixer 2 (Final)",
+            type: "process",
+            data: { result: "" },
+          },
+        ],
+        connections: [],
+        selectedNodes: new Set(),
+        selectedConnection: null,
+        clipboard: [],
+      };
+
+      // DOM Refs
+      const container = document.getElementById("editor-container");
+      const svgLayer = document.getElementById("connections-layer");
+      const tempLine = document.getElementById("temp-line");
+      const selectionBoxEl = document.getElementById("selection-box");
+      const contextMenu = document.getElementById("context-menu");
+
+      // Flags
+      let interactionMode = "idle";
+      let dragStartPos = { x: 0, y: 0 };
+      let dragNodeOffsets = new Map();
+      let connectionStartInfo = null;
+
+      function init() {
+        renderNodes();
+        updateConnections();
+        evaluateGraph(); // 初始计算
+        bindEvents();
+      }
+
+      // --- 2. Events ---
+      function bindEvents() {
+        document.addEventListener("mousedown", (e) => {
+          if (contextMenu.contains(e.target)) return;
+          hideContextMenu();
+          if (e.target === container || e.target === svgLayer) {
+            if (!e.ctrlKey && !e.shiftKey) deselectAll();
+            startBoxSelection(e.clientX, e.clientY);
+          }
+        });
+
+        document.addEventListener("mousemove", onGlobalMove);
+        document.addEventListener("mouseup", onGlobalUp);
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Delete" || e.key === "Backspace") {
+            deleteSelected();
+            hideContextMenu();
+          }
+          if (e.ctrlKey && (e.key === "c" || e.key === "C")) copySelection();
+          if (e.ctrlKey && (e.key === "v" || e.key === "V")) pasteSelection();
+        });
+        container.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          if (e.target === container || e.target === svgLayer) {
+            showContextMenu(e.clientX, e.clientY, [
+              {
+                label: "添加颜色节点",
+                action: () => createNodeAt(e.clientX, e.clientY, "source"),
+              },
+              {
+                label: "添加混合节点",
+                action: () => createNodeAt(e.clientX, e.clientY, "process"),
+              },
+              { separator: true },
+              { label: "粘贴", shortcut: "Ctrl+V", action: pasteSelection },
+            ]);
+          }
+        });
+      }
+
+      // --- 3. Interaction (Standard) ---
+      // (省略部分未变更的交互代码，如拖拽、框选，与V0.7一致，为节省篇幅直接复用逻辑)
+
+      window.startNodeDrag = function (e, nodeId) {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        if (!state.selectedNodes.has(nodeId) && !e.ctrlKey) {
+          deselectAll();
+          state.selectedNodes.add(nodeId);
+        } else if (e.ctrlKey) {
+          state.selectedNodes.has(nodeId)
+            ? state.selectedNodes.delete(nodeId)
+            : state.selectedNodes.add(nodeId);
+        }
+        renderSelectionState();
+        interactionMode = "dragNode";
+        dragNodeOffsets.clear();
+        state.selectedNodes.forEach((id) => {
+          const node = state.nodes.find((n) => n.id === id);
+          dragNodeOffsets.set(id, {
+            offsetX: node.x - e.clientX,
+            offsetY: node.y - e.clientY,
+          });
+        });
+      };
+
+      function startBoxSelection(x, y) {
+        interactionMode = "boxSelect";
+        dragStartPos = { x, y };
+        selectionBoxEl.style.left = x + "px";
+        selectionBoxEl.style.top = y + "px";
+        selectionBoxEl.style.width = "0px";
+        selectionBoxEl.style.height = "0px";
+        selectionBoxEl.style.display = "block";
+      }
+      function updateBoxSelection(currX, currY) {
+        const x = Math.min(dragStartPos.x, currX),
+          y = Math.min(dragStartPos.y, currY);
+        const w = Math.abs(currX - dragStartPos.x),
+          h = Math.abs(currY - dragStartPos.y);
+        selectionBoxEl.style.left = x + "px";
+        selectionBoxEl.style.top = y + "px";
+        selectionBoxEl.style.width = w + "px";
+        selectionBoxEl.style.height = h + "px";
+        const selectRect = { left: x, right: x + w, top: y, bottom: y + h };
+        state.nodes.forEach((node) => {
+          const el = document.getElementById(node.id);
+          const r = el.getBoundingClientRect();
+          if (
+            !(
+              r.right < selectRect.left ||
+              r.left > selectRect.right ||
+              r.bottom < selectRect.top ||
+              r.top > selectRect.bottom
+            )
+          )
+            state.selectedNodes.add(node.id);
+        });
+        renderSelectionState();
+      }
+
+      window.startConnection = function (e, nodeId) {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        e.preventDefault();
+        interactionMode = "dragConnection";
+        const startPos = getHandlePosition(nodeId, "output");
+        connectionStartInfo = { nodeId, startPos };
+        tempLine.style.display = "block";
+        updateTempLine(e.clientX, e.clientY);
+      };
+
+      function onGlobalMove(e) {
+        if (interactionMode === "dragNode") {
+          dragNodeOffsets.forEach((offset, id) => {
+            const node = state.nodes.find((n) => n.id === id);
+            if (node) {
+              node.x = e.clientX + offset.offsetX;
+              node.y = e.clientY + offset.offsetY;
+              document.getElementById(node.id).style.left = node.x + "px";
+              document.getElementById(node.id).style.top = node.y + "px";
+            }
+          });
+          updateConnections();
+        } else if (interactionMode === "boxSelect")
+          updateBoxSelection(e.clientX, e.clientY);
+        else if (interactionMode === "dragConnection")
+          updateTempLine(e.clientX, e.clientY);
+      }
+
+      function onGlobalUp() {
+        if (interactionMode === "boxSelect")
+          selectionBoxEl.style.display = "none";
+        interactionMode = "idle";
+        if (connectionStartInfo) stopConnectionDrag();
+      }
+
+      // --- 4. Logic Core (核心升级) ---
+
+      // 递归获取颜色函数
+      // node: 当前节点对象
+      // visited: 已访问节点ID集合（防止死循环）
+      function getNodeColorsRecursively(node, visited = new Set()) {
+        if (visited.has(node.id)) return []; // 发现环，终止递归
+        visited.add(node.id);
+
+        // 如果是源节点，直接返回它的颜色
+        if (node.type === "source") {
+          return [node.data.color];
+        }
+
+        // 如果是处理节点，寻找它的上游
+        const inputConns = state.connections.filter((c) => c.to === node.id);
+        let collectedColors = [];
+
+        inputConns.forEach((conn) => {
+          const upstreamNode = state.nodes.find((n) => n.id === conn.from);
+          if (upstreamNode) {
+            // 递归调用：获取上游的颜色列表
+            const upstreamColors = getNodeColorsRecursively(
+              upstreamNode,
+              new Set(visited)
+            );
+            collectedColors = collectedColors.concat(upstreamColors);
+          }
+        });
+
+        return collectedColors;
+      }
+
+      // 重新设计的图计算引擎
+      window.updateColor = function (nodeId, color) {
+        state.nodes.find((n) => n.id === nodeId).data.color = color;
+        evaluateGraph();
+      };
+
+      function evaluateGraph() {
+        // 1. 找到所有处理节点
+        const processNodes = state.nodes.filter((n) => n.type === "process");
+
+        // 2. 逐个计算
+        processNodes.forEach((node) => {
+          const el = document.getElementById("result-" + node.id);
+          if (!el) return;
+
+          // 调用递归函数收集所有上游颜色
+          const colors = getNodeColorsRecursively(node);
+
+          if (colors.length === 0) {
+            el.style.background = "#222";
+            el.innerText = "等待输入...";
+          } else {
+            // 渲染结果
+            if (colors.length === 1) {
+              el.style.background = colors[0];
+              el.innerText = colors[0];
+            } else {
+              el.style.background = `linear-gradient(90deg, ${colors.join(
+                ", "
+              )})`;
+              el.innerText = `Mix(${colors.length})`;
+            }
+          }
+        });
+      }
+
+      // --- Helper Utils ---
+      function createNodeAt(x, y, type = "source") {
+        const newNode = {
+          id: "node-" + Date.now(),
+          x: x,
+          y: y,
+          title: type === "source" ? "Input Color" : "Mixer",
+          type: type,
+          data: type === "source" ? { color: "#ffffff" } : { result: "" },
+        };
+        state.nodes.push(newNode);
+        renderNodes();
+        evaluateGraph();
+      }
+
+      // ... (复制/粘贴/删除 逻辑保持 V0.7 一致) ...
+      function copySelection() {
+        if (state.selectedNodes.size === 0) return;
+        const nodesToCopy = state.nodes.filter((n) =>
+          state.selectedNodes.has(n.id)
+        );
+        state.clipboard = JSON.parse(JSON.stringify(nodesToCopy));
+      }
+      function pasteSelection() {
+        if (!state.clipboard || state.clipboard.length === 0) return;
+        deselectAll();
+        state.clipboard.forEach((clipNode) => {
+          const newId =
+            "node-" + Date.now() + Math.random().toString(36).substr(2, 5);
+          const newNode = {
+            ...clipNode,
+            id: newId,
+            x: clipNode.x + 30,
+            y: clipNode.y + 30,
+          };
+          state.nodes.push(newNode);
+          state.selectedNodes.add(newId);
+        });
+        renderNodes();
+        updateConnections();
+        renderSelectionState();
+        evaluateGraph();
+      }
+      function deleteSelected() {
+        if (state.selectedConnection) {
+          state.connections = state.connections.filter(
+            (c) => c.id !== state.selectedConnection
+          );
+          state.selectedConnection = null;
+        }
+        if (state.selectedNodes.size > 0) {
+          state.nodes = state.nodes.filter(
+            (n) => !state.selectedNodes.has(n.id)
+          );
+          state.connections = state.connections.filter(
+            (c) =>
+              !state.selectedNodes.has(c.from) && !state.selectedNodes.has(c.to)
+          );
+          state.selectedNodes.clear();
+        }
+        renderNodes();
+        updateConnections();
+        evaluateGraph();
+      }
+
+      // ... (渲染函数保持 V0.7 一致) ...
+      function renderNodes() {
+        container.querySelectorAll(".node").forEach((el) => el.remove());
+        state.nodes.forEach((node) => {
+          const div = document.createElement("div");
+          div.className = `node ${
+            state.selectedNodes.has(node.id) ? "selected" : ""
+          }`;
+          div.id = node.id;
+          div.style.left = node.x + "px";
+          div.style.top = node.y + "px";
+          div.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!state.selectedNodes.has(node.id)) {
+              deselectAll();
+              state.selectedNodes.add(node.id);
+              renderSelectionState();
+            }
+            showContextMenu(e.clientX, e.clientY, [
+              { label: "复制", shortcut: "Ctrl+C", action: copySelection },
+              { label: "删除", shortcut: "Del", action: deleteSelected },
+            ]);
+          });
+          let bodyContent =
+            node.type === "source"
+              ? `<input type="color" value="${node.data.color}" oninput="updateColor('${node.id}', this.value)" onmousedown="event.stopPropagation()">`
+              : `<div class="result-box" id="result-${node.id}">等待输入...</div>`;
+          div.innerHTML = `
+                <div class="node-header" onmousedown="startNodeDrag(event, '${
+                  node.id
+                }')">${node.title}</div>
+                <div class="node-body">${bodyContent}</div>
+                ${
+                  node.type !== "source"
+                    ? `<div class="handle handle-input" onmouseup="tryEndConnection(event, '${node.id}')"></div>`
+                    : ""
+                }
+                <div class="handle handle-output" onmousedown="startConnection(event, '${
+                  node.id
+                }')"></div>
+            `;
+          container.appendChild(div);
+        });
+      }
+
+      function updateConnections() {
+        svgLayer
+          .querySelectorAll(".connection-group")
+          .forEach((l) => l.remove());
+        state.connections.forEach((conn) => {
+          const p1 = getHandlePosition(conn.from, "output"),
+            p2 = getHandlePosition(conn.to, "input");
+          if (!p1 || !p2) return;
+          const d = calculateBezier(p1, p2);
+          const isSelected = state.selectedConnection === conn.id;
+          const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+          g.setAttribute(
+            "class",
+            `connection-group ${isSelected ? "selected" : ""}`
+          );
+          const hitPath = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "path"
+          );
+          hitPath.setAttribute("d", d);
+          hitPath.setAttribute("class", "connection-line-hit");
+          hitPath.addEventListener("mousedown", (e) => {
+            e.stopPropagation();
+            deselectAll();
+            state.selectedConnection = conn.id;
+            renderSelectionState();
+          });
+          hitPath.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            state.selectedConnection = conn.id;
+            renderSelectionState();
+            showContextMenu(e.clientX, e.clientY, [
+              { label: "删除连线", shortcut: "Del", action: deleteSelected },
+            ]);
+          });
+          const visualPath = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "path"
+          );
+          visualPath.setAttribute("d", d);
+          visualPath.setAttribute("class", "connection-line-visual");
+          g.appendChild(hitPath);
+          g.appendChild(visualPath);
+          svgLayer.appendChild(g);
+        });
+      }
+
+      function calculateBezier(start, end) {
+        const dist = Math.abs(end.x - start.x) * 0.5;
+        return `M ${start.x} ${start.y} C ${start.x + dist} ${start.y}, ${
+          end.x - dist
+        } ${end.y}, ${end.x} ${end.y}`;
+      }
+      function getHandlePosition(nodeId, type) {
+        const nodeEl = document.getElementById(nodeId);
+        if (!nodeEl) return null;
+        return {
+          x:
+            type === "input"
+              ? parseInt(nodeEl.style.left)
+              : parseInt(nodeEl.style.left) + 180,
+          y: parseInt(nodeEl.style.top) + 47,
+        };
+      }
+      function updateTempLine(x, y) {
+        if (!connectionStartInfo) return;
+        tempLine.setAttribute(
+          "d",
+          calculateBezier(connectionStartInfo.startPos, { x, y })
+        );
+      }
+
+      window.tryEndConnection = function (e, targetNodeId) {
+        e.stopPropagation();
+        if (interactionMode !== "dragConnection") return;
+        const sourceId = connectionStartInfo.nodeId;
+        // 防止自环 (A->A)
+        if (sourceId !== targetNodeId) {
+          const isDuplicate = state.connections.some(
+            (conn) => conn.from === sourceId && conn.to === targetNodeId
+          );
+          if (!isDuplicate) {
+            state.connections.push({
+              id: "conn_" + Date.now(),
+              from: sourceId,
+              to: targetNodeId,
+            });
+            updateConnections();
+            evaluateGraph();
+          }
+        }
+        stopConnectionDrag();
+      };
+      function stopConnectionDrag() {
+        interactionMode = "idle";
+        connectionStartInfo = null;
+        tempLine.style.display = "none";
+        tempLine.setAttribute("d", "");
+      }
+      function renderSelectionState() {
+        document
+          .querySelectorAll(".node")
+          .forEach((el) =>
+            state.selectedNodes.has(el.id)
+              ? el.classList.add("selected")
+              : el.classList.remove("selected")
+          );
+        updateConnections();
+      }
+      function deselectAll() {
+        state.selectedNodes.clear();
+        state.selectedConnection = null;
+        renderSelectionState();
+      }
+      function showContextMenu(x, y, items) {
+        contextMenu.innerHTML = "";
+        items.forEach((item) => {
+          if (item.separator) {
+            contextMenu.appendChild(document.createElement("div")).className =
+              "menu-separator";
+            return;
+          }
+          const div = document.createElement("div");
+          div.className = "menu-item";
+          div.innerHTML = `<span>${item.label}</span>${
+            item.shortcut
+              ? `<span class="shortcut">${item.shortcut}</span>`
+              : ""
+          }`;
+          div.onclick = () => {
+            item.action();
+            hideContextMenu();
+          };
+          contextMenu.appendChild(div);
+        });
+        contextMenu.style.left = x + "px";
+        contextMenu.style.top = y + "px";
+        contextMenu.style.display = "block";
+      }
+      function hideContextMenu() {
+        contextMenu.style.display = "none";
+      }
+
+      init();
+    </script>
+  </body>
+</html>

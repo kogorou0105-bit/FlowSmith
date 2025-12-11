@@ -1,1 +1,27 @@
 @import "tailwindcss";
+
+/* 定义你的自定义主题 */
+@theme {
+  /* v4 自动映射逻辑：
+     定义 --color-node-bg 后，
+     自动生成 bg-node-bg, text-node-bg, border-node-bg 等类名 
+  */
+  --color-editor-bg: #1e1e1e;
+  --color-node-bg: rgba(40, 40, 40, 0.95);
+  --color-highlight: #ffaa00;
+
+  /* 定义阴影 */
+  --shadow-node-selected: 0 0 0 2px rgba(255, 170, 0, 0.5),
+    0 4px 15px rgba(0, 0, 0, 0.5);
+}
+
+/* 这里的 Grid 背景比较复杂，还是用标准 CSS 写最稳 */
+.editor-grid-bg {
+  background-color: var(--color-editor-bg);
+  background-image: linear-gradient(
+      rgba(255, 255, 255, 0.05) 1px,
+      transparent 1px
+    ),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 40px 40px;
+}

@@ -1,10 +1,13 @@
+// 引入我们的主编辑器组件
+// 假设你把 NodeEditor.jsx 放在了 src/ 根目录下
+// 如果你把它放在了 src/components/ 下，请改为 import NodeEditor from './components/NodeEditor';
+import NodeEditor from "./NodeEditor";
+
 function App() {
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <h1 className="text-3xl font-bold text-blue-600">
-        React + Tailwind 脚手架已就绪 🚀
-      </h1>
-    </div>
+    // NodeEditor 组件内部已经设置了 w-screen h-screen (全屏)，
+    // 所以这里不需要额外的 div 包裹，直接渲染即可。
+    <NodeEditor />
   );
 }
 
